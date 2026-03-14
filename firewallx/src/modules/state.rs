@@ -25,4 +25,8 @@ impl StateTable {
             self.connections.insert((pkt.src_ip, pkt.dst_ip, pkt.src_port, pkt.dst_port));
         }
     }
+
+    pub fn len(&self) -> usize {
+        self.connections.len()
+    }
 }

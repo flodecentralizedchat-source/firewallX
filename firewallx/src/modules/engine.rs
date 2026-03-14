@@ -13,6 +13,14 @@ use crate::modules::qos::QosManager;
 use crate::modules::packet::QosPriority;
 use crate::modules::siem::{SiemLogger, SiemEvent};
 use maxminddb::geoip2;
+use prometheus_exporter::prometheus::{IntCounter, IntCounterVec, IntGauge, register_int_counter, register_int_counter_vec, register_int_gauge, opts};
+use lazy_static::lazy_static;
+
+lazy_static! {
+    static ref PACKETS_TOTAL: IntCounter = register_int_counter!(opts!("firewallx_packets_total", "Total number of packets processed by the engine")).unwrap();
+    static ref PACKETS_DROPPED: IntCounterVec = register_int_counter_vec!("firewallx_packets_dropped_total", "Total packets dropped, labelled by reason", &["reason"]).unwrap();
+    static ref ACTIVE_CONNECTIONS: IntGauge = register_int_gauge!(opts!("firewallx_active_connections", "Number of currently active connections in the state table")).unwrap();
+}
 
 /// The verdict returned for every packet.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,10 +127,12 @@ impl FirewallEngine {
     ///   6. Log + update stats.
     pub fn process(&mut self, pkt: &mut Packet) -> Decision {
         self.stats.total += 1;
+        PACKETS_TOTAL.inc();
 
         // ── Step -1: Userspace Blocklist Enforcement ────────────────
         if self.active_blocks.contains(&pkt.src_ip) {
             self.stats.dropped += 1;
+            PACKETS_DROPPED.with_label_values(&["blocklist"]).inc();
             if let Some(ref siem) = self.siem {
                 siem.log(SiemEvent::new("BLOCKLIST", &pkt.src_ip.to_string(), &pkt.dst_ip.to_string(), pkt.dst_port, &pkt.protocol.to_string(), "Malicious IP found in feeds", "Drop"));
             }
@@ -146,6 +156,7 @@ impl FirewallEngine {
         if let Some(ref mut limit) = self.rate_limiter {
             if limit.check(pkt.src_ip) {
                 self.stats.rate_limited += 1;
+                PACKETS_DROPPED.with_label_values(&["rate_limit"]).inc();
                 if let Some(ref siem) = self.siem {
                     siem.log(SiemEvent::new("RATE_LIMIT", &pkt.src_ip.to_string(), &pkt.dst_ip.to_string(), pkt.dst_port, &pkt.protocol.to_string(), "IP exceeded connection limits", "Drop"));
                 }
@@ -165,6 +176,7 @@ impl FirewallEngine {
         if let Some(ref mut qos) = self.qos_manager {
             if qos.check(&pkt) {
                 self.stats.qos_dropped += 1;
+                PACKETS_DROPPED.with_label_values(&["qos"]).inc();
                 return Decision::Drop; // Normal traffic dropped under heavy load
             }
         }
@@ -181,6 +193,7 @@ impl FirewallEngine {
             }
             if alerts.iter().any(|a| a.block) {
                 self.stats.ips_blocked += 1;
+                PACKETS_DROPPED.with_label_values(&["ids"]).inc();
                 return Decision::IpsBlock;
             }
         }
@@ -198,8 +211,12 @@ impl FirewallEngine {
                 self.logger.log_rule_hit(pkt, rule);
                 match rule.action {
                     Action::Allow  => Decision::Allow,
-                    Action::Drop   => Decision::Drop,
+                    Action::Drop   => {
+                        PACKETS_DROPPED.with_label_values(&["rule"]).inc();
+                        Decision::Drop
+                    },
                     Action::Reject => {
+                        PACKETS_DROPPED.with_label_values(&["rule"]).inc();
                         self.ids.record_reject(pkt.src_ip);
                         Decision::Reject
                     }
@@ -208,6 +225,7 @@ impl FirewallEngine {
             // ── Step 4: default deny ──────────────────────────
             None => {
                 self.logger.log_default_deny(pkt);
+                PACKETS_DROPPED.with_label_values(&["default_deny"]).inc();
                 Decision::Drop
             }
         };
@@ -245,7 +263,8 @@ impl FirewallEngine {
                 self.stats.dpi_blocked += 1;
                 // Undo the Allow stat added in process()
                 self.stats.allowed  = self.stats.allowed.saturating_sub(1);
-                
+                PACKETS_DROPPED.with_label_values(&["dpi"]).inc();
+
                 if let Some(ref siem) = self.siem {
                     let reasons: Vec<_> = dpi_result.matches.iter().map(|m| m.sig_id.to_string()).collect();
                     let msg = format!("Payload inspection matched signatures: {}", reasons.join(","));
@@ -264,12 +283,19 @@ impl FirewallEngine {
     pub fn stats(&self) -> Stats { self.stats.clone() }
 
     pub fn ruleset_mut(&mut self) -> &mut RuleSet { &mut self.ruleset }
+    pub fn ruleset(&self) -> &RuleSet { &self.ruleset }
 
     pub fn state_table_mut(&mut self) -> &mut StateTable { &mut self.state_table }
 
     pub fn dpi_mut(&mut self) -> &mut DpiEngine { &mut self.dpi }
 
     pub fn ids_mut(&mut self) -> &mut IdsEngine { &mut self.ids }
+    
+    pub fn ids(&self) -> &IdsEngine { &self.ids }
+    
+    pub fn active_connections(&self) -> usize {
+        self.state_table.len()
+    }
 
     pub fn config_mut(&mut self) -> &mut EngineConfig { &mut self.config }
 

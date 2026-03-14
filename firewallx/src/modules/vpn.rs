@@ -364,6 +364,10 @@ impl VpnGateway {
     pub fn peer_count(&self) -> usize {
         self.peers.len()
     }
+
+    pub fn active_sessions(&self) -> Vec<&TunnelSession> {
+        self.sessions.values().collect()
+    }
 }
 
 impl Default for VpnGateway {

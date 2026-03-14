@@ -25,10 +25,22 @@ pub struct FirewallConfig {
     pub siem_url: Option<String>,
     #[serde(default)]
     pub siem_api_key: Option<String>,
+    
+    // New Production Features configuration
+    #[serde(default)]
+    pub prometheus_enabled: bool,
+    #[serde(default = "default_prometheus_addr")]
+    pub prometheus_addr: String,
+    #[serde(default)]
+    pub json_logging: bool,
+    #[serde(default = "default_blocklist_update_interval")]
+    pub blocklist_update_interval_secs: u64,
 }
 
 fn default_rate_limit() -> u32 { 100 }
 fn default_bandwidth() -> u64 { 1000 } // 1 Gbps default
+fn default_prometheus_addr() -> String { "0.0.0.0:9100".to_string() }
+fn default_blocklist_update_interval() -> u64 { 3600 }
 
 impl FirewallConfig {
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {

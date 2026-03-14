@@ -44,11 +44,11 @@ impl BlocklistManager {
                             all_ips.extend(parsed);
                         }
                     } else {
-                        log::warn!("Failed to fetch blocklist feed {}: HTTP {}", feed_url, response.status());
+                        tracing::warn!("Failed to fetch blocklist feed {}: HTTP {}", feed_url, response.status());
                     }
                 }
                 Err(e) => {
-                    log::warn!("Error fetching blocklist feed {}: {}", feed_url, e);
+                    tracing::warn!("Error fetching blocklist feed {}: {}", feed_url, e);
                 }
             }
         }

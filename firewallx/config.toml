@@ -1,0 +1,32 @@
+feeds = []
+suricata_rules = []
+max_connections_per_sec = 0
+max_bandwidth_mbps = 0
+wg_peers = []
+siem_enabled = false
+prometheus_enabled = true
+prometheus_addr = "127.0.0.1:9100"
+json_logging = true
+blocklist_update_interval_secs = 60
+
+[ids]
+port_scan_threshold = 15
+flood_pps_threshold = 500
+brute_force_threshold = 10
+max_payload_bytes = 65000
+ips_mode = false
+
+[ids.window]
+secs = 10
+nanos = 0
+
+[ids.block_duration]
+secs = 300
+nanos = 0
+
+[[ruleset.rules]]
+id = 1
+name = "block_ssh"
+action = "Drop"
+protocol = "Tcp"
+direction = "Inbound"
