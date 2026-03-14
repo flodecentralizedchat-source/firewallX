@@ -9,7 +9,26 @@ use anyhow::{Context, Result};
 pub struct FirewallConfig {
     pub ids: IdsConfig,
     pub ruleset: RuleSet,
+    #[serde(default)]
+    pub feeds: Vec<String>,
+    #[serde(default)]
+    pub suricata_rules: Vec<String>,
+    #[serde(default = "default_rate_limit")]
+    pub max_connections_per_sec: u32,
+    #[serde(default = "default_bandwidth")]
+    pub max_bandwidth_mbps: u64,
+    #[serde(default)]
+    pub wg_peers: Vec<String>,
+    #[serde(default)]
+    pub siem_enabled: bool,
+    #[serde(default)]
+    pub siem_url: Option<String>,
+    #[serde(default)]
+    pub siem_api_key: Option<String>,
 }
+
+fn default_rate_limit() -> u32 { 100 }
+fn default_bandwidth() -> u64 { 1000 } // 1 Gbps default
 
 impl FirewallConfig {
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {

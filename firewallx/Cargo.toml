@@ -9,13 +9,16 @@ description = "A remarkably fast eBPF + Rust programmable firewall"
 env_logger = "0.11"
 ipnet = "2.12.0"
 log = "0.4"
-aya = "0.12.0"
-firewallx-common = { path = "../firewallx-common", features = ["user"] }
+firewallx-common = { path = "../firewallx-common" }
 tokio = { version = "1.30", features = ["macros", "rt", "rt-multi-thread"] }
 anyhow = "1"
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
+maxminddb = "0.24"
+reqwest = { version = "0.11", features = ["blocking", "rustls-tls", "json"], default-features = false }
+regex = "1.10"
+serde_json = "1.0.149"
 
 [package.metadata.deb]
 maintainer = "FirewallX <security@example.com>"
@@ -30,3 +33,10 @@ extended-description = """\
 FirewallX is an incredibly fast eBPF programmable firewall natively built \
 in Rust that allows for line-rate packet dropping, Deep Packet Inspection, \
 and Behavioral flow analysis via IDS."""
+
+[target.'cfg(target_os = "linux")'.dependencies]
+aya = "0.12.0"
+firewallx-common = { path = "../firewallx-common", features = ["user"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

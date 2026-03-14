@@ -21,6 +21,13 @@ pub enum Direction {
     Outbound,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum QosPriority {
+    Normal,
+    High,
+    Critical,
+}
+
 #[derive(Debug, Clone)]
 pub struct Packet {
     pub src_ip: Ipv4Addr,
@@ -30,6 +37,8 @@ pub struct Packet {
     pub protocol: Protocol,
     pub direction: Direction,
     pub payload_len: usize,
+    pub country: Option<String>,
+    pub qos: QosPriority,
 }
 
 impl Packet {
@@ -50,6 +59,8 @@ impl Packet {
             protocol,
             direction,
             payload_len,
+            country: None,
+            qos: QosPriority::Normal,
         }
     }
 }

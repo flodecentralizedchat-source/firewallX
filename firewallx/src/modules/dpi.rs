@@ -215,6 +215,11 @@ impl DpiEngine {
         self.signatures.push(sig);
     }
 
+    /// Add multiple signatures from an external source (e.g. Suricata rules)
+    pub fn extend_signatures(&mut self, sigs: Vec<Signature>) {
+        self.signatures.extend(sigs);
+    }
+
     /// Remove a signature by id.
     pub fn remove(&mut self, id: u32) -> bool {
         let before = self.signatures.len();

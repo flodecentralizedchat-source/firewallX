@@ -19,6 +19,7 @@ pub struct Rule {
     pub dst_port: Option<u16>,
     pub protocol: Protocol,
     pub direction: Direction,
+    pub country: Option<Vec<String>>,
 }
 
 impl Rule {
@@ -31,6 +32,7 @@ impl Rule {
         dst_port: Option<u16>,
         protocol: Protocol,
         direction: Direction,
+        country: Option<Vec<String>>,
     ) -> Self {
         Self {
             id,
@@ -41,6 +43,7 @@ impl Rule {
             dst_port,
             protocol,
             direction,
+            country,
         }
     }
 
@@ -64,6 +67,15 @@ impl Rule {
         if let Some(dip) = self.dst_ip {
             if dip != pkt.dst_ip {
                 return false;
+            }
+        }
+        if let Some(ref rule_countries) = self.country {
+            if let Some(ref pkt_country) = pkt.country {
+                if !rule_countries.contains(pkt_country) {
+                    return false; // Packet is from a country not in the list
+                }
+            } else {
+                return false; // Rule requires a country, but packet has none
             }
         }
         true

