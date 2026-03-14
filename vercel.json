@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "name": "firewallx-frontend",
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build"
+    }
+  ]
+}
