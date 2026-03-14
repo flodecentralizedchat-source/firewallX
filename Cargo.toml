@@ -1,0 +1,9 @@
+[package]
+name = "firewallx"
+version = "0.2.0"
+edition = "2021"
+
+[dependencies]
+env_logger = "0.11"
+ipnet = "2.12.0"
+log = "0.4"
