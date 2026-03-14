@@ -2,6 +2,7 @@
 // Public library interface for FirewallX
 
 pub mod modules;
+pub mod config;
 
 pub use modules::engine::FirewallEngine;
 pub use modules::packet::{Packet, Protocol, Direction};

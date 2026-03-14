@@ -1,0 +1,11 @@
+[ids]
+window = { secs = 10, nanos = 0 }
+port_scan_threshold = 15
+flood_pps_threshold = 500
+brute_force_threshold = 10
+max_payload_bytes = 65000
+block_duration = { secs = 300, nanos = 0 }
+ips_mode = true
+
+[ruleset]
+rules = []

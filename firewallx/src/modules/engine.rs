@@ -258,7 +258,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod tests {
+mod tests_advanced {
     use super::*;
     use std::net::Ipv4Addr;
     use crate::modules::packet::{Packet, Protocol, Direction};

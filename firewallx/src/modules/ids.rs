@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
+use serde::{Serialize, Deserialize};
 
 use crate::modules::packet::{Direction, Packet, Protocol};
 
@@ -114,7 +115,7 @@ impl SourceRecord {
 // ─────────────────────────────────────────────────────────────
 
 /// Tunable thresholds for all detectors.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IdsConfig {
     /// Detection window duration.
     pub window: Duration,

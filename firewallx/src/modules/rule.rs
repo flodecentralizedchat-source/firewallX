@@ -1,14 +1,15 @@
 use crate::modules::packet::{Packet, Protocol, Direction};
+use serde::{Serialize, Deserialize};
 use std::net::Ipv4Addr;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
     Allow,
     Drop,
     Reject,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rule {
     pub id: u32,
     pub name: String,
@@ -69,8 +70,9 @@ impl Rule {
     }
 }
 
+#[derive(Serialize, Deserialize, Default)]
 pub struct RuleSet {
-    rules: Vec<Rule>,
+    pub rules: Vec<Rule>,
 }
 
 impl RuleSet {
@@ -87,8 +89,4 @@ impl RuleSet {
     }
 }
 
-impl Default for RuleSet {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// default impl removed as we derive Default

@@ -1,6 +1,7 @@
 use std::net::Ipv4Addr;
+use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Protocol {
     Tcp,
     Udp,
@@ -14,7 +15,7 @@ impl std::fmt::Display for Protocol {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Direction {
     Inbound,
     Outbound,

@@ -1,0 +1,11 @@
+[package]
+name = "firewallx-ebpf"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aya-ebpf = "0.1.1"
+network-types = "0.0.5"
+firewallx-common = { path = "../firewallx-common" }
+
+

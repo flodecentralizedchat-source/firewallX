@@ -1,0 +1,12 @@
+Feature/Firewall,FirewallX (Yours),pfSense,OPNsense,iptables/nftables,Suricata,Cilium
+Core Technology,Rust + eBPF / XDP,FreeBSD (pf),FreeBSD (pf),Linux Netfilter (Kernel),C / Rust,eBPF / Go
+Packet Filtering,Stateful (Hardware/XDP offload),Stateful,Stateful,Stateful,Stateful (Signature-based),Stateful (eBPF)
+Performance,Extremely High (Line-rate XDP drops),High (Kernel space),High (Kernel space),High (Kernel space),Medium (Userspace / AF_PACKET),Extremely High (eBPF)
+Deep Packet Inspection (DPI),Yes (Built-in engine),Via Plugins (Snort/Suricata),Via Plugins (Suricata),Requires extensions (nDPI),Yes (Core feature),L7 visibility (via Envoy proxy)
+IDS / IPS,Yes (Behavioral rules & blocks),Via Plugins,Via Plugins,No (Requires external tools),Yes (Industry standard),Yes (Tetragon & Network policies)
+VPN Gateway,Yes (Custom PSK / Cryptography),IPsec / OpenVPN / WireGuard,IPsec / OpenVPN / WireGuard,No (Requires external tools),No,IPsec / WireGuard built-in
+Configuration Method,Code-driven / Programmatic,Web GUI,Web GUI,CLI commands,CLI / Rulesets,Kubernetes CRDs / CLI
+Primary Deployment Focus,Custom Network Appliances & Dev,Edge Firewalls / Routers,Edge Firewalls / Routers,Linux Host Security,Network Security Monitoring,Cloud Native / Kubernetes
+Memory Safety,Very High (Rust),Medium (C/C++ legacy),Medium (C/C++ legacy),Medium (C kernel code),High (Transitioning to Rust),High (Go userspace)
+Data Structures,eBPF Maps (LPM Trie / Hash / Ring Buffer) & Rust Structs,Radix Trees & pf State Tables (RB-Tree),Radix Trees & pf State Tables (RB-Tree),Linked Lists (iptables) / RB-Trees & Bitmaps (nftables),Hash Tables & Flow Tables,eBPF Maps (Hash / LPM / LRU Caches)
+Algorithms,Zero-copy parsing & eBPF XDP fast-path processing,Stateful connection tracking & Longest Prefix Match,Stateful connection tracking & Longest Prefix Match,Linear subset traversal (iptables) & Set-based matching (nftables),Aho-Corasick / Hyperscan multi-pattern matching,Identity-based policy enforcement & eBPF fast-path routing

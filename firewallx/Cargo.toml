@@ -1,0 +1,32 @@
+[package]
+name = "firewallx"
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+description = "A remarkably fast eBPF + Rust programmable firewall"
+
+[dependencies]
+env_logger = "0.11"
+ipnet = "2.12.0"
+log = "0.4"
+aya = "0.12.0"
+firewallx-common = { path = "../firewallx-common", features = ["user"] }
+tokio = { version = "1.30", features = ["macros", "rt", "rt-multi-thread"] }
+anyhow = "1"
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+
+[package.metadata.deb]
+maintainer = "FirewallX <security@example.com>"
+copyright = "2026, FirewallX"
+depends = "$auto"
+assets = [
+    ["target/release/firewallx", "usr/bin/", "755"],
+    ["firewallx.service", "lib/systemd/system/", "644"],
+    ["config.toml.example", "etc/firewallx/config.toml", "644"]
+]
+extended-description = """\
+FirewallX is an incredibly fast eBPF programmable firewall natively built \
+in Rust that allows for line-rate packet dropping, Deep Packet Inspection, \
+and Behavioral flow analysis via IDS."""

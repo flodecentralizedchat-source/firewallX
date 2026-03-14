@@ -1,0 +1,15 @@
+[Unit]
+Description=FirewallX eBPF Network Security Engine
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/firewallx start
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

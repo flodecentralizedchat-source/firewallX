@@ -25,48 +25,33 @@
 
 ### Integration Example
 
-FirewallX can be used as a backend library for custom networking appliances or as a standalone demonstration engine. Here is a basic code example combining Firewall Rules, IDS, and DPI.
-
-```rust
-use std::time::Duration;
-use firewallx::{
-    FirewallEngine, Packet, Protocol, Direction,
-    Rule, Action, RuleSet, IdsConfig
-};
-use firewallx::modules::engine::EngineConfig;
-
-fn main() {
-    let mut rules = RuleSet::new();
-    rules.add(Rule::new(1, "Allow SSH", Action::Allow, None, None, Some(22), Protocol::Tcp, Direction::Inbound));
-    rules.add(Rule::new(999, "Default Drop", Action::Drop, None, None, None, Protocol::Any, Direction::Inbound));
-
-    let ids_cfg = IdsConfig {
-        ips_mode: true,
-        port_scan_threshold: 6,
-        flood_pps_threshold: 20,
-        brute_force_threshold: 3,
-        window: Duration::from_secs(30),
-        max_payload_bytes: 65_000,
-        block_duration: Duration::from_secs(120),
-    };
-
-    let mut engine = FirewallEngine::with_config(rules, EngineConfig::default(), ids_cfg);
-
-    // Provide a sample HTTP packet and payload to trigger deep-packet inspection
-    let pkt = Packet::new(...);
-    let decision = engine.process_with_payload(&pkt, b"GET /login?user=' OR '1'='1&pass=x HTTP/1.1\r\n");
-    println!("Action: {:?}", decision);
-}
-```
-
-### Running the Demo
-
-The `main.rs` file included in this repository serves as a comprehensive demo of FirewallX's capabilities. 
-To run the demo locally, move into the project base directory and start the engine:
+FirewallX is pre-packaged as a standalone Debian application (`.deb`). You do not need to compile the code or write a custom `main.rs`. Once installed, you can configure the firewall directly from the command line:
 
 ```bash
-RUST_LOG=info cargo run --release
+# Block all incoming SSH traffic instantly
+sudo firewallx rule add --name "Block SSH" --action drop --port 22 --protocol tcp --direction inbound
+
+# View the active programmatic configuration
+sudo firewallx rule list
 ```
+
+### Running the Engine
+
+You can start the engine in the foreground to watch traffic alerts in real-time. It will automatically load the configured eBPF program into the kernel if you are on a compatible Linux environment:
+
+```bash
+sudo firewallx start
+```
+
+### Running the eBPF Demo (Docker)
+
+If you are on macOS or Windows and want to test the blazing-fast eBPF kernel drops, we have provided a Docker setup that runs the engine in a privileged Linux container. Ensure Docker Desktop is running, then execute:
+
+```bash
+docker compose up --build
+```
+
+Once running, you can connect to the container and run `nmap localhost` to trigger the IDS and watch the kernel instantly drop your subsequent traffic!
 
 To run the test suite for all modules (including DPI and VPN specs):
 
