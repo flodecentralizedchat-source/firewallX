@@ -64,7 +64,7 @@ pub async fn spawn_ai_investigator(
                         warn!("🚨 [AI Agent] Autonomous response triggered: Requesting block for IP {}!", alert.src_ip);
                         
                         // Autonomous feedback loop: Inject block directly into engine
-                        let mut engine_lock = engine.lock().await;
+                        let _engine_lock = engine.lock().await;
                         // For MVP, we insert a dropped state into active_connections 
                         // In reality, this would inject a new `Rule` or update the eBPF hardware map
                         warn!("🚨 [AI Agent] ACTION EXECUTED: IP {} definitively blocked.", alert.src_ip);

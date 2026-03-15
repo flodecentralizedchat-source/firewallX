@@ -32,7 +32,7 @@ pub struct DashboardStats {
 #[derive(Serialize)]
 pub struct HealthResponse {
     pub status: String,
-    pub uptime: u64,
+    pub uptime: u32,
 }
 
 async fn health_check() -> Json<HealthResponse> {
