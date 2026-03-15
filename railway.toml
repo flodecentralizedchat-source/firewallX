@@ -5,7 +5,7 @@
 # Tell Railway to use our Dockerfile explicitly
 # (prevents it from trying nixpacks which won't find the right image)
 builder = "DOCKERFILE"
-dockerfilePath = "Dockerfile"
+dockerfilePath = "Dockerfile.railway"
 
 [deploy]
 startCommand = "./firewallx"
