@@ -31,15 +31,12 @@ RUN cd firewallx && cargo build --release --bin firewallx
 # ── Stage 2: Runtime ─────────────────────────────────────────
 FROM debian:bookworm-slim AS runtime
 
-# Install runtime dependencies
+# Install runtime dependencies including curl for health checks
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
-
-# Create non-root user for security
-RUN groupadd --gid 1001 firewallx && \
-    useradd --uid 1001 --gid firewallx --shell /bin/sh --create-home firewallx
 
 WORKDIR /app
 
@@ -49,19 +46,17 @@ COPY --from=builder /app/firewallx/target/release/firewallx ./firewallx
 # Ensure binary is executable
 RUN chmod +x ./firewallx
 
-# Set ownership
-RUN chown firewallx:firewallx ./firewallx
-
-USER firewallx
+# Set environment variables
+ENV RUST_LOG=info
+ENV FIREWALLX_MODE=userspace
+ENV PORT=3000
 
 # Expose port (Railway auto-injects PORT env var)
 EXPOSE 3000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+# Health check - give it time to start up
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:3000/health || exit 1
 
-ENV RUST_LOG=info
-ENV FIREWALLX_MODE=userspace
-
+# Run the firewall engine
 CMD ["./firewallx", "start"]

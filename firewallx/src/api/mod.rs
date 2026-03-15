@@ -29,6 +29,19 @@ pub struct DashboardStats {
     pub ids_alerts: u64,
 }
 
+#[derive(Serialize)]
+pub struct HealthResponse {
+    pub status: String,
+    pub uptime: u64,
+}
+
+async fn health_check() -> Json<HealthResponse> {
+    Json(HealthResponse {
+        status: "healthy".to_string(),
+        uptime: std::process::id(),
+    })
+}
+
 pub async fn start_api_server(state: DashboardState) {
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -36,6 +49,7 @@ pub async fn start_api_server(state: DashboardState) {
         .allow_headers(Any);
 
     let app = Router::new()
+        .route("/health", get(health_check))
         .route("/api/stats", get(get_stats))
         .route("/api/rules", get(get_rules).post(add_rule))
         .route("/api/alerts", get(get_alerts))
