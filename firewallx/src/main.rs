@@ -554,10 +554,16 @@ async fn start_firewall() -> Result<(), anyhow::Error> {
         vpn: Arc::clone(&shared_vpn),
     };
     
-    // Spawn Web Dashboard API Thread
+    // Spawn Web Dashboard API Server in background
+    tracing::info!("🌐 Starting Dashboard API on http://0.0.0.0:3000");
     tokio::spawn(async move {
-        start_api_server(dashboard_state).await;
+        if let Err(e) = start_api_server(dashboard_state).await {
+            tracing::error!("API server failed: {}", e);
+        }
     });
+    
+    // Give API server time to bind before health checks
+    tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Spawn AI Agent Task
     if config.ai_agent_enabled {
