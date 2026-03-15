@@ -1,0 +1,173 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+:root {
+  /* Dynamic Dark Theme Coordinates */
+  --bg-color: #0b0c10;
+  --bg-gradient: radial-gradient(circle at top right, #1f2833, #0b0c10 70%);
+
+  /* Typography */
+  --text-primary: #ffffff;
+  --text-secondary: #c5c6c7;
+  --font-family: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
+
+  /* Accent Colors */
+  --accent-cyan: #66fcf1;
+  --accent-cyan-dim: rgba(102, 252, 241, 0.2);
+  --accent-teal: #45a29e;
+  
+  /* Status Colors */
+  --status-ok: #4caf50;
+  --status-warn: #ff9800;
+  --status-error: #f44336;
+  --status-error-dim: rgba(244, 67, 54, 0.15);
+
+  /* Glassmorphism Tokens */
+  --glass-bg: rgba(255, 255, 255, 0.03);
+  --glass-bg-hover: rgba(255, 255, 255, 0.08);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  --glass-blur: blur(12px);
+  --glass-blur-heavy: blur(20px);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-family);
+  background: var(--bg-gradient);
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+/* Glassmorphism Card Utility */
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  box-shadow: var(--glass-shadow);
+  padding: 24px;
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.glass-panel:hover {
+  background: var(--glass-bg-hover);
+  border-color: rgba(255, 255, 255, 0.15);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.45);
+}
+
+/* Typographic Utilities */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.text-gradient {
+  background: linear-gradient(90deg, var(--text-primary), var(--accent-cyan));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.stats-value {
+  font-size: 2.5rem;
+  font-weight: 700;
+  letter-spacing: -1px;
+  margin: 12px 0;
+}
+
+.stats-label {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 500;
+}
+
+/* Micro-Animations & Glows */
+@keyframes pulseGlow {
+  0% { box-shadow: 0 0 0 0 var(--accent-cyan-dim); }
+  70% { box-shadow: 0 0 0 10px rgba(102, 252, 241, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(102, 252, 241, 0); }
+}
+
+@keyframes errorPulse {
+  0% { box-shadow: 0 0 0 0 var(--status-error-dim); }
+  70% { box-shadow: 0 0 0 10px rgba(244, 67, 54, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(244, 67, 54, 0); }
+}
+
+.live-indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--accent-cyan);
+  animation: pulseGlow 2s infinite;
+  margin-right: 8px;
+}
+
+/* Custom Scrollbar styled for dark themes */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2); 
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1); 
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2); 
+}
+
+/* Interactive Elements */
+button.btn-primary {
+  background: var(--accent-teal);
+  color: #fff;
+  border: 1px solid var(--accent-cyan);
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(4px);
+}
+
+button.btn-primary:hover {
+  background: var(--accent-cyan);
+  color: #000;
+  transform: scale(1.05);
+  box-shadow: 0 0 15px var(--accent-cyan-dim);
+}
+
+input[type="text"], select {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--glass-border);
+  color: var(--text-primary);
+  padding: 12px;
+  border-radius: 8px;
+  font-family: inherit;
+  transition: border-color 0.2s;
+  outline: none;
+}
+
+input[type="text"]:focus, select:focus {
+  border-color: var(--accent-cyan);
+  box-shadow: 0 0 0 2px var(--accent-cyan-dim);
+}

@@ -17,6 +17,7 @@ use firewallx::modules::wireguard::WgConfigParser;
 use firewallx::modules::rate_limiter::RateLimiter;
 use firewallx::modules::qos::QosManager;
 use firewallx::modules::siem::SiemLogger;
+use firewallx::modules::agent;
 use firewallx::config::FirewallConfig;
 use std::net::Ipv4Addr;
 use std::fs;
@@ -425,6 +426,17 @@ async fn start_firewall() -> Result<(), anyhow::Error> {
     // Start Engine
     let mut engine = FirewallEngine::with_config(config.ruleset, EngineConfig::default(), config.ids);
 
+    // Initialize Autonomous AI Investigator Pipeline
+    let (alert_tx, alert_rx) = tokio::sync::mpsc::channel(100);
+    if config.ai_agent_enabled {
+        if let Some(key) = &config.openai_api_key {
+            engine.ids_mut().alert_tx = Some(alert_tx);
+            tracing::info!("🤖 AI Autonomous Incident Commander enabled. Streaming IDS alerts to LLM...");
+        } else {
+            tracing::warn!("⚠️ AI Agent enabled but no OpenAI API key found in config. Defaulting to autonomous off.");
+        }
+    }
+
     // Mount Rate Limiter (Fail2Ban behavior)
     if config.max_connections_per_sec > 0 {
         engine.rate_limiter = Some(RateLimiter::new(config.max_connections_per_sec, Duration::from_secs(1)));
@@ -546,6 +558,17 @@ async fn start_firewall() -> Result<(), anyhow::Error> {
     tokio::spawn(async move {
         start_api_server(dashboard_state).await;
     });
+
+    // Spawn AI Agent Task
+    if config.ai_agent_enabled {
+        if let Some(key) = config.openai_api_key.clone() {
+            let ai_engine = Arc::clone(&shared_engine);
+            let model = config.ai_model.clone();
+            tokio::spawn(async move {
+                agent::spawn_ai_investigator(ai_engine, alert_rx, key, model).await;
+            });
+        }
+    }
 
     let mut engine_lock = shared_engine.lock().await;
 

@@ -1,0 +1,43 @@
+feeds = []
+suricata_rules = []
+max_connections_per_sec = 0
+max_bandwidth_mbps = 0
+wg_peers = []
+siem_enabled = false
+prometheus_enabled = false
+prometheus_addr = ""
+json_logging = false
+blocklist_update_interval_secs = 0
+ai_agent_enabled = false
+ai_model = ""
+
+[ids]
+port_scan_threshold = 15
+flood_pps_threshold = 500
+brute_force_threshold = 10
+max_payload_bytes = 65000
+ips_mode = false
+
+[ids.window]
+secs = 10
+nanos = 0
+
+[ids.block_duration]
+secs = 300
+nanos = 0
+
+[[ruleset.rules]]
+id = 1
+name = "Block SSH"
+action = "Drop"
+dst_port = 22
+protocol = "Tcp"
+direction = "Inbound"
+
+[[ruleset.rules]]
+id = 2
+name = "Allow HTTPS"
+action = "Allow"
+dst_port = 443
+protocol = "Tcp"
+direction = "Outbound"

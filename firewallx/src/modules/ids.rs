@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
+use tokio::sync::mpsc;
 
 use crate::modules::packet::{Direction, Packet, Protocol};
 
@@ -158,6 +159,7 @@ pub struct IdsEngine {
     blacklist: Vec<Ipv4Addr>,
     alerts: Vec<Alert>,
     total_alerts: u64,
+    pub alert_tx: Option<mpsc::Sender<Alert>>,
 }
 
 impl IdsEngine {
@@ -168,6 +170,7 @@ impl IdsEngine {
             blacklist: Vec::new(),
             alerts: Vec::new(),
             total_alerts: 0,
+            alert_tx: None,
         }
     }
 
@@ -317,6 +320,13 @@ impl IdsEngine {
     fn commit_alerts(&mut self, alerts: &[Alert]) {
         self.total_alerts += alerts.len() as u64;
         self.alerts.extend_from_slice(alerts);
+        
+        if let Some(tx) = &self.alert_tx {
+            for a in alerts {
+                // Non-blocking try_send for real-time engine loop
+                let _ = tx.try_send(a.clone());
+            }
+        }
     }
 
     pub fn alerts(&self) -> &[Alert] {

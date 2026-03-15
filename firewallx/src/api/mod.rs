@@ -40,6 +40,7 @@ pub async fn start_api_server(state: DashboardState) {
         .route("/api/rules", get(get_rules).post(add_rule))
         .route("/api/alerts", get(get_alerts))
         .route("/api/tunnels", get(get_tunnels))
+        .route("/api/chat", post(handle_chat))
         .layer(cors)
         .with_state(state);
 
@@ -121,4 +122,37 @@ async fn get_tunnels(State(state): State<DashboardState>) -> Json<Vec<TunnelResp
         bytes_out: t.bytes_out,
     }).collect();
     Json(tunnels)
+}
+
+#[derive(serde::Deserialize)]
+pub struct ChatRequest {
+    pub prompt: String,
+}
+
+#[derive(Serialize)]
+pub struct ChatResponse {
+    pub response: String,
+}
+
+async fn handle_chat(State(state): State<DashboardState>, Json(req): Json<ChatRequest>) -> Json<ChatResponse> {
+    // Collect minimal system state to embed into the prompt context
+    let engine = state.engine.lock().await;
+    let s = engine.stats();
+    let stats = format!("Total Pkts: {}, Dropped: {}, Active Tunnels: {}, Alerts: {}", 
+                        s.total, s.dropped, engine.active_connections(), engine.ids().total_alerts());
+                        
+    drop(engine); // Release early
+    
+    // NOTE: A production version of this would securely construct an `async_openai` client here as well,
+    // execute the chat completions call, and mutate state.
+    // For this initial UI testing scaffold, we're returning exactly what that output WOULD look like.
+    
+    let mock_reply = format!(
+        "🤖 [Copilot Response] System context registered ({stats}). Understood your command: \"{}\". Action has been scheduled.",
+        req.prompt
+    );
+
+    Json(ChatResponse {
+        response: mock_reply
+    })
 }

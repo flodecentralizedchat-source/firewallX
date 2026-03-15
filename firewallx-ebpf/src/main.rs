@@ -59,6 +59,7 @@ fn try_firewallx_ebpf(ctx: XdpContext) -> Result<u32, ()> {
     Ok(xdp_action::XDP_PASS)
 }
 
+#[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     unsafe { core::hint::unreachable_unchecked() }

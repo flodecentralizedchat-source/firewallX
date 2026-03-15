@@ -35,12 +35,21 @@ pub struct FirewallConfig {
     pub json_logging: bool,
     #[serde(default = "default_blocklist_update_interval")]
     pub blocklist_update_interval_secs: u64,
+    
+    // AI Integration Settings
+    #[serde(default)]
+    pub ai_agent_enabled: bool,
+    #[serde(default)]
+    pub openai_api_key: Option<String>,
+    #[serde(default = "default_ai_model")]
+    pub ai_model: String,
 }
 
 fn default_rate_limit() -> u32 { 100 }
 fn default_bandwidth() -> u64 { 1000 } // 1 Gbps default
 fn default_prometheus_addr() -> String { "0.0.0.0:9100".to_string() }
 fn default_blocklist_update_interval() -> u64 { 3600 }
+fn default_ai_model() -> String { "gpt-4o-mini".to_string() }
 
 impl FirewallConfig {
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {

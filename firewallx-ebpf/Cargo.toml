@@ -8,4 +8,7 @@ aya-ebpf = "0.1.1"
 network-types = "0.0.5"
 firewallx-common = { path = "../firewallx-common" }
 
-
+[[bin]]
+name = "firewallx-ebpf"
+path = "src/main.rs"
+test = false

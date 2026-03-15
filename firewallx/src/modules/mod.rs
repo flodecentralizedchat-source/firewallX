@@ -14,3 +14,4 @@ pub mod vpn;
 pub mod wireguard;
 pub mod siem;
 pub mod error;
+pub mod agent;

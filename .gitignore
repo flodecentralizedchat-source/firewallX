@@ -35,3 +35,6 @@ vmlinux.h
 
 # Logs
 *.log
+roadmap.md
+production.md
+web-ui.md

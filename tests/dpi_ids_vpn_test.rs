@@ -21,37 +21,37 @@ use firewallx::modules::vpn::VpnError;
 #[test]
 fn dpi_blocks_sql_injection_through_engine() {
     let mut rs = RuleSet::new();
-    rs.add(Rule::new(1, "Allow HTTP", Action::Allow, None, None, Some(80), Protocol::Tcp, Direction::Inbound));
+    rs.add(Rule::new(1, "Allow HTTP", Action::Allow, None, None, Some(80), Protocol::Tcp, Direction::Inbound, None));
     let mut engine = FirewallEngine::new(rs);
 
-    let pkt = Packet::new(
+    let mut pkt = Packet::new(
         Ipv4Addr::new(1,2,3,4), Ipv4Addr::new(10,0,0,1),
-        54321, 80, Protocol::Tcp, Direction::Inbound, 64,
+        54321, 80, Protocol::Tcp, Direction::Inbound, 64, None
     );
     let payload = b"POST /login HTTP/1.1\r\n\r\nuser=' OR '1'='1";
-    assert_eq!(engine.process_with_payload(&pkt, payload), Decision::DpiBlock);
+    assert_eq!(engine.process_with_payload(&mut pkt, payload), Decision::DpiBlock);
     assert_eq!(engine.stats().dpi_blocked, 1);
 }
 
 #[test]
 fn dpi_blocks_windows_pe_upload() {
     let mut rs = RuleSet::new();
-    rs.add(Rule::new(1, "Allow all inbound", Action::Allow, None, None, None, Protocol::Tcp, Direction::Inbound));
+    rs.add(Rule::new(1, "Allow all inbound", Action::Allow, None, None, None, Protocol::Tcp, Direction::Inbound, None));
     let mut engine = FirewallEngine::new(rs);
-    let pkt = Packet::new(Ipv4Addr::new(2,2,2,2), Ipv4Addr::new(10,0,0,1), 9000, 80, Protocol::Tcp, Direction::Inbound, 100);
+    let mut pkt = Packet::new(Ipv4Addr::new(2,2,2,2), Ipv4Addr::new(10,0,0,1), 9000, 80, Protocol::Tcp, Direction::Inbound, 100, None);
     let mut payload = b"MZ\x90\x00".to_vec();
     payload.extend_from_slice(&[0u8; 60]);
-    assert_eq!(engine.process_with_payload(&pkt, &payload), Decision::DpiBlock);
+    assert_eq!(engine.process_with_payload(&mut pkt, &payload), Decision::DpiBlock);
 }
 
 #[test]
 fn dpi_allows_clean_tls_payload() {
     let mut rs = RuleSet::new();
-    rs.add(Rule::new(1, "Allow HTTPS", Action::Allow, None, None, Some(443), Protocol::Tcp, Direction::Outbound));
+    rs.add(Rule::new(1, "Allow HTTPS", Action::Allow, None, None, Some(443), Protocol::Tcp, Direction::Outbound, None));
     let mut engine = FirewallEngine::new(rs);
-    let pkt = Packet::new(Ipv4Addr::new(10,0,0,1), Ipv4Addr::new(1,1,1,1), 49000, 443, Protocol::Tcp, Direction::Outbound, 100);
+    let mut pkt = Packet::new(Ipv4Addr::new(10,0,0,1), Ipv4Addr::new(1,1,1,1), 49000, 443, Protocol::Tcp, Direction::Outbound, 100, None);
     let payload = b"\x16\x03\x01\x00\xf4\x01\x00\x00\xf0\x03\x03";
-    assert_eq!(engine.process_with_payload(&pkt, payload), Decision::Allow);
+    assert_eq!(engine.process_with_payload(&mut pkt, payload), Decision::Allow);
 }
 
 #[test]
@@ -97,6 +97,28 @@ fn dpi_stats_accumulate_per_category() {
     assert!(*stats.get("Malware").unwrap_or(&0) >= 1);
 }
 
+#[test]
+fn dpi_suricata_integration() {
+    use firewallx::modules::suricata::SuricataParser;
+    
+    let mut dpi = DpiEngine::new();
+    
+    let snort_rule = r#"
+        alert tcp any any -> any any (msg:"MALWARE-CNC Win.Trojan.X"; content:"|2E|php|3F|id|3D|"; classtype:trojan-activity; sid:9000001; rev:1;)
+    "#;
+
+    let signatures = SuricataParser::parse_string(snort_rule);
+    dpi.extend_signatures(signatures);
+
+    let payload = b"GET /login.php?id=admin HTTP/1.1";
+    let result = dpi.inspect(payload);
+    
+    assert!(result.matches.iter().any(|m| m.sig_id == 9000001));
+    assert_eq!(result.matches.iter().find(|m| m.sig_id == 9000001).unwrap().name, "MALWARE-CNC Win.Trojan.X");
+    // Since trojan-activity maps to Critical, and default block_on includes Critical, this should be blocked.
+    assert!(result.blocked);
+}
+
 // ─────────────────────────────────────────────────────────────
 // IDS/IPS Integration
 // ─────────────────────────────────────────────────────────────
@@ -114,7 +136,7 @@ fn ids_cfg() -> IdsConfig {
 }
 
 fn make_pkt(src: Ipv4Addr, dport: u16, proto: Protocol, payload: usize) -> Packet {
-    Packet::new(src, Ipv4Addr::new(10,0,0,1), 10000, dport, proto, Direction::Inbound, payload)
+    Packet::new(src, Ipv4Addr::new(10,0,0,1), 10000, dport, proto, Direction::Inbound, payload, None)
 }
 
 #[test]
@@ -180,18 +202,18 @@ fn ids_engine_integrates_with_firewall_engine() {
     cfg.window = Duration::from_secs(60);
 
     let mut rs = RuleSet::new();
-    rs.add(Rule::new(1, "Allow all", Action::Allow, None, None, None, Protocol::Tcp, Direction::Inbound));
+    rs.add(Rule::new(1, "Allow all", Action::Allow, None, None, None, Protocol::Tcp, Direction::Inbound, None));
     let mut engine = FirewallEngine::with_config(rs, EngineConfig::default(), cfg);
 
     let attacker = Ipv4Addr::new(77, 77, 77, 77);
     // Probe 5 different ports → should trigger scan
     for port in [22u16, 80, 443, 8080, 3306] {
-        let p = Packet::new(attacker, Ipv4Addr::new(10,0,0,1), 1000, port, Protocol::Tcp, Direction::Inbound, 0);
-        engine.process(&p);
+        let mut p = Packet::new(attacker, Ipv4Addr::new(10,0,0,1), 1000, port, Protocol::Tcp, Direction::Inbound, 0, None);
+        engine.process(&mut p);
     }
     // Next packet should be IPS-blocked
-    let p = Packet::new(attacker, Ipv4Addr::new(10,0,0,1), 1000, 5432, Protocol::Tcp, Direction::Inbound, 0);
-    assert_eq!(engine.process(&p), Decision::IpsBlock);
+    let mut p = Packet::new(attacker, Ipv4Addr::new(10,0,0,1), 1000, 5432, Protocol::Tcp, Direction::Inbound, 0, None);
+    assert_eq!(engine.process(&mut p), Decision::IpsBlock);
 }
 
 #[test]
@@ -203,10 +225,98 @@ fn ids_oversized_payload_detected() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// VPN Gateway Integration
+// Blocklist / Threat Intel Integration
 // ─────────────────────────────────────────────────────────────
 
-fn make_gateway() -> (VpnGateway, Ipv4Addr) {
+#[test]
+fn threat_intel_userspace_blocking() {
+    let mut rs = RuleSet::new();
+    rs.add(Rule::new(1, "Allow all", Action::Allow, None, None, None, Protocol::Any, Direction::Inbound, None));
+    
+    let mut engine = FirewallEngine::new(rs);
+    let malicious_ip = Ipv4Addr::new(203, 0, 113, 99);
+    
+    // Inject pseudo-fetched blocklist IPs directly into the engine's active_blocks
+    let mut malicious_ips = std::collections::HashSet::new();
+    malicious_ips.insert(malicious_ip);
+    engine.active_blocks = malicious_ips;
+
+    // Traffic from malicious IP should be dropped immediately at Step -1
+    let mut pkt_bad = Packet::new(malicious_ip, Ipv4Addr::new(10,0,0,1), 1000, 80, Protocol::Tcp, Direction::Inbound, 0, None);
+    assert_eq!(engine.process(&mut pkt_bad), Decision::Drop);
+    
+    // Traffic from benign IP should be allowed
+    let benign_ip = Ipv4Addr::new(8, 8, 8, 8);
+    let mut pkt_good = Packet::new(benign_ip, Ipv4Addr::new(10,0,0,1), 1000, 80, Protocol::Tcp, Direction::Inbound, 0, None);
+    assert_eq!(engine.process(&mut pkt_good), Decision::Allow);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Rate Limiter & QoS Integration
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_engine_rate_limiting() {
+    use firewallx::modules::rate_limiter::RateLimiter;
+    use std::time::Duration;
+
+    let mut engine = FirewallEngine::new(RuleSet::new());
+    engine.rate_limiter = Some(RateLimiter::new(100, Duration::from_secs(1)));
+    
+    let attacker = Ipv4Addr::new(99, 99, 99, 99);
+    
+    // First 100 packets should be allowed (hit default deny since no rules, but for rate limiting we check the counter)
+    for _ in 0..100 {
+        let mut pkt = make_pkt(attacker, 80, Protocol::Tcp, 0);
+        // We expect it to pass RateLimiter, then hit StateTable or RuleSet. Since rule set is empty -> Drop
+        assert_eq!(engine.process(&mut pkt), Decision::Drop);
+    }
+    
+    // Packet 101 should be explicitly RateLimited and returned as Drop from Step 0.3
+    let mut pkt = make_pkt(attacker, 80, Protocol::Tcp, 0);
+    assert_eq!(engine.process(&mut pkt), Decision::Drop);
+    assert_eq!(engine.stats().rate_limited, 1);
+}
+
+#[test]
+fn test_engine_qos_under_load() {
+    use firewallx::modules::qos::QosManager;
+    use firewallx::modules::packet::QosPriority;
+
+    let mut engine = FirewallEngine::new(RuleSet::new());
+    engine.qos_manager = Some(QosManager::new(100_000)); // 100 KB/s
+    
+    let src = Ipv4Addr::new(10, 0, 0, 5);
+    
+    // Push 95KB of normal traffic to saturate (threshold is 90KB)
+    let mut heavy_pkt = make_pkt(src, 80, Protocol::Tcp, 95_000);
+    heavy_pkt.qos = QosPriority::Normal;
+    engine.process(&mut heavy_pkt);
+    
+    // Now the engine is saturated. Standard HTTP traffic should be dropped by QoS.
+    let mut normal_pkt = make_pkt(src, 80, Protocol::Tcp, 10_000);
+    assert_eq!(engine.process(&mut normal_pkt), Decision::Drop);
+    assert_eq!(engine.stats().qos_dropped, 1);
+    
+    // High-priority SSH traffic (port 22) should bypass QoS drops.
+    let mut ssh_pkt = make_pkt(src, 22, Protocol::Tcp, 10_000);
+    // Note: It bypasses QoS, then hits default deny -> Drop, but stats.qos_dropped remains 1
+    assert_eq!(engine.process(&mut ssh_pkt), Decision::Drop);
+    assert_eq!(engine.stats().qos_dropped, 1);
+}
+
+// ─────────────────────────────────────────────────────────────
+// VPN Gateway & WireGuard Integration
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_wireguard_gateway_initialization() {
+    use firewallx::modules::wireguard::WgMessageType;
+
+    // Simulate an inbound WireGuard packet
+    let payload = [0x01, 0x00, 0x00, 0x00, 0xFF, 0xEE];
+    assert_eq!(WgMessageType::from_udp_payload(&payload), WgMessageType::Initiation);
+}
     let peer_ip = Ipv4Addr::new(203, 0, 113, 10);
     let mut gw = VpnGateway::new();
     gw.add_peer(
