@@ -560,8 +560,11 @@ async fn start_firewall() -> Result<(), anyhow::Error> {
         start_api_server(dashboard_state).await;
     });
     
-    // Give API server time to bind before health checks
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // Give API server time to bind before health checks (increased for Railway)
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    
+    // Log that API should be ready
+    tracing::info!("✅ API server should be ready for health checks");
 
     // Spawn AI Agent Task
     if config.ai_agent_enabled {
