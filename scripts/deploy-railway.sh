@@ -1,26 +1,46 @@
 #!/bin/bash
-# Script to deploy the project to Railway (Backend)
+# Deploy FirewallX Backend to Railway
 set -e
 
-echo "Deploying backend to Railway..."
+echo "💚 Deploying FirewallX Backend to Railway..."
 
 # Check if railway CLI is installed
-if ! command -v railway &> /dev/null
-then
-    echo "Railway CLI could not be found. Please install it first:"
-    echo "npm i -g @railway/cli"
-    exit 1
+if ! command -v railway &> /dev/null; then
+    echo "❌ Railway CLI not found. Installing..."
+    npm install -g @railway/cli
 fi
 
-# Login to Railway if needed
-# railway login
+# Login if needed
+if [ ! -f ~/.config/railway/token ]; then
+    echo "🔐 Please login to Railway..."
+    railway login
+fi
 
-# Link or initialize the project
-# railway link
+# Initialize or link project
+if [ ! -f .railway/project.json ]; then
+    echo "📋 Initializing Railway project..."
+    railway init || railway link
+fi
 
-echo "Starting deployment..."
+# Set environment variables
+echo "⚙️  Configuring environment..."
+railway variables set \
+    RUST_LOG=info \
+    PROMETHEUS_ENABLED=true \
+    PROMETHEUS_PORT=9100 \
+    AI_AGENT_ENABLED=false \
+    CONFIG_PATH=/app/config.toml
+
+echo "🚀 Starting deployment..."
 railway up
 
-echo "✅ Railway deployment triggered successfully."
-echo "Note: FirewallX uses eBPF and requires a privileged container."
-echo "Ensure your Railway environment supports required capabilities (CAP_NET_ADMIN, CAP_SYS_ADMIN, CAP_BPF)."
+echo ""
+echo "✅ Railway deployment complete!"
+echo ""
+echo "💡 Next steps:"
+echo "  1. Get your Railway URL from dashboard"
+echo "  2. Update VITE_API_URL in Vercel: vercel env set VITE_API_URL https://your-app.railway.app production"
+echo "  3. Redeploy Vercel frontend if needed"
+echo ""
+echo "⚠️  Note: FirewallX runs in userspace mode on Railway (no eBPF support)"
+echo "   This provides full firewall functionality via the REST API"

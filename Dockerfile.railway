@@ -1,0 +1,72 @@
+# Railway Deployment Dockerfile for FirewallX
+# Optimized for cloud deployment without eBPF (userspace mode)
+
+FROM rustlang/rust:1.75-slim as builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    clang \
+    llvm \
+    libelf-dev \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy workspace files
+COPY Cargo.toml Cargo.lock ./
+COPY firewallx ./firewallx
+COPY firewallx-common ./firewallx-common
+COPY firewallx-ebpf ./firewallx-ebpf
+
+# Build in release mode (eBPF will be disabled on non-Linux)
+RUN cargo build --release --bin firewallx
+
+# Runtime stage
+FROM debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd -m -u 1000 firewallx
+
+WORKDIR /app
+
+# Copy compiled binary from builder
+COPY --from=builder /app/target/release/firewallx /app/firewallx
+
+# Copy configuration
+COPY firewallx/config.toml.example /app/config.toml
+COPY firewallx/firewallx.service /app/firewallx.service
+
+# Set ownership
+RUN chown -R firewallx:firewallx /app
+
+# Switch to non-root user
+USER firewallx
+
+# Expose API port
+EXPOSE 3000
+
+# Expose Prometheus metrics port
+EXPOSE 9100
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:3000/health || exit 1
+
+# Set environment variables
+ENV RUST_LOG=info
+ENV CONFIG_PATH=/app/config.toml
+ENV PROMETHEUS_ENABLED=true
+ENV PROMETHEUS_PORT=9100
+
+# Run the firewall engine
+CMD ["./firewallx", "start"]
