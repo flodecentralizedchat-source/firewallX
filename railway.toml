@@ -8,11 +8,12 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile.railway"
 
 [deploy]
-startCommand = "./firewallx"
-healthcheckPath = "/"
+startCommand = "./firewallx start"
+healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
 
 [[services]]
 name = "firewallx"
+port = 3000
