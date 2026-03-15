@@ -38,3 +38,5 @@ vmlinux.h
 roadmap.md
 production.md
 web-ui.md
+.vercel
+.env*.local

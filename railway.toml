@@ -1,24 +1,18 @@
+# railway.toml — FirewallX Railway deployment config
+# Docs: https://docs.railway.app/reference/config-as-code
+
 [build]
+# Tell Railway to use our Dockerfile explicitly
+# (prevents it from trying nixpacks which won't find the right image)
 builder = "DOCKERFILE"
-dockerfilePath = "Dockerfile.railway"
+dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "./target/release/firewallx start --api-only"
+startCommand = "./firewallx"
+healthcheckPath = "/"
+healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
-healthcheckPath = "/health"
-healthcheckTimeout = 30
 
-[service]
-name = "FirewallX API"
-port = 3000
-
-[service.variables]
-RUST_LOG = "info"
-PROMETHEUS_ENABLED = "true"
-PROMETHEUS_PORT = "9100"
-AI_AGENT_ENABLED = "false"
-CONFIG_PATH = "/app/config.toml"
-
-[[services.domains]]
-name = "firewallx.railway.app"
+[[services]]
+name = "firewallx"
