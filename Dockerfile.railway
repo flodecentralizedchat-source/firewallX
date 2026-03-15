@@ -49,7 +49,7 @@ RUN chmod +x ./firewallx
 # Set environment variables
 ENV RUST_LOG=info
 ENV FIREWALLX_MODE=userspace
-ENV PORT=3000
+# PORT is injected by Railway at runtime
 
 # Expose port (Railway auto-injects PORT env var)
 EXPOSE 3000

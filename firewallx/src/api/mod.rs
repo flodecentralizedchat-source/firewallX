@@ -63,8 +63,8 @@ pub async fn start_api_server(state: DashboardState) {
         .layer(cors)
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    tracing::info!("Dashboard API listening on http://0.0.0.0:3000");
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", std::env::var("PORT").unwrap_or_else(|_| "3000".to_string()))).await.unwrap();
+    tracing::info!("Dashboard API listening on http://0.0.0.0:{}", std::env::var("PORT").unwrap_or_else(|_| "3000".to_string()));
     
     if let Err(e) = axum::serve(listener, app).await {
         tracing::error!("API server error: {}", e);
