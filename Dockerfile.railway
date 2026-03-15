@@ -1,15 +1,15 @@
 # FirewallX — Railway Deployment Dockerfile
 # Optimized for cloud deployment (userspace mode, no eBPF)
-#
-# FIX: rustlang/rust does NOT exist on Docker Hub.
-#      The correct official image is: rust:<version>-slim
 # ─────────────────────────────────────────────────────────────
 
 # ── Stage 1: Builder ─────────────────────────────────────────
 FROM rust:1.75-slim AS builder
 
-# Install only what's needed to compile
+# Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    clang \
+    llvm \
+    libelf-dev \
     pkg-config \
     libssl-dev \
     ca-certificates \
@@ -17,35 +17,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Cache dependencies first (layer caching trick)
-# Copy manifests only, build a dummy main so deps compile & cache
-COPY Cargo.toml Cargo.lock* ./
+# Copy workspace configuration
+COPY Cargo.toml Cargo.lock ./
 
-RUN mkdir -p src && \
-    echo 'fn main() { println!("placeholder"); }' > src/main.rs && \
-    echo 'pub fn placeholder() {}' > src/lib.rs && \
-    cargo build --release && \
-    rm -rf src
+# Copy all crate directories
+COPY firewallx ./firewallx
+COPY firewallx-common ./firewallx-common
+COPY firewallx-ebpf ./firewallx-ebpf
 
-# Now copy real source and build
-COPY src ./src
-COPY tests ./tests
-
-# Touch files so Cargo sees them as changed vs the placeholder build
-RUN touch src/main.rs src/lib.rs && \
-    cargo build --release
+# Build the firewallx binary (release mode)
+RUN cargo build --release --bin firewallx
 
 # ── Stage 2: Runtime ─────────────────────────────────────────
 FROM debian:bookworm-slim AS runtime
 
+# Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create a non-root user for security
+# Create non-root user for security
 RUN groupadd --gid 1001 firewallx && \
-    useradd  --uid 1001 --gid firewallx --shell /bin/sh --create-home firewallx
+    useradd --uid 1001 --gid firewallx --shell /bin/sh --create-home firewallx
 
 WORKDIR /app
 
@@ -55,16 +49,19 @@ COPY --from=builder /app/target/release/firewallx ./firewallx
 # Ensure binary is executable
 RUN chmod +x ./firewallx
 
+# Set ownership
+RUN chown firewallx:firewallx ./firewallx
+
 USER firewallx
 
-# Railway injects PORT automatically; expose it for documentation
-EXPOSE 8080
+# Expose port (Railway auto-injects PORT env var)
+EXPOSE 3000
 
-# Health check — Railway uses this to know the service is ready
+# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD ./firewallx --health-check 2>/dev/null || exit 0
+    CMD curl -f http://localhost:3000/health || exit 1
 
 ENV RUST_LOG=info
 ENV FIREWALLX_MODE=userspace
 
-CMD ["./firewallx"]
+CMD ["./firewallx", "start"]
