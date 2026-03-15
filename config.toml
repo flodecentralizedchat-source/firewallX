@@ -41,3 +41,38 @@ action = "Allow"
 dst_port = 443
 protocol = "Tcp"
 direction = "Outbound"
+
+[[ruleset.rules]]
+id = 3
+name = "Allow HTTPS Inbound"
+action = "Allow"
+dst_port = 443
+protocol = "Tcp"
+direction = "Inbound"
+
+[[ruleset.rules]]
+id = 4
+name = "Allow HTTP Outbound"
+action = "Allow"
+dst_port = 80
+protocol = "Tcp"
+direction = "Outbound"
+
+[[ruleset.rules]]
+id = 5
+name = "Block Russia & China"
+action = "Drop"
+protocol = "Any"
+direction = "Inbound"
+country = [
+    "RU",
+    "CN",
+]
+
+[[ruleset.rules]]
+id = 6
+name = "Allow DNS"
+action = "Allow"
+dst_port = 53
+protocol = "Udp"
+direction = "Outbound"
