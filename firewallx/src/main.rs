@@ -557,9 +557,7 @@ async fn start_firewall() -> Result<(), anyhow::Error> {
     // Spawn Web Dashboard API Server in background
     tracing::info!("🌐 Starting Dashboard API on http://0.0.0.0:3000");
     tokio::spawn(async move {
-        if let Err(e) = start_api_server(dashboard_state).await {
-            tracing::error!("API server failed: {}", e);
-        }
+        start_api_server(dashboard_state).await;
     });
     
     // Give API server time to bind before health checks
