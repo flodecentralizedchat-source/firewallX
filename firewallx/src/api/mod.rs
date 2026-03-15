@@ -3,10 +3,10 @@ use firewallx::modules::rule::Rule;
 use firewallx::modules::vpn::{VpnGateway, TunnelState};
 use axum::{
     extract::State,
+    http::header::HeaderValue,
     routing::{get, post},
     Json, Router,
 };
-use http::header::HeaderValue;
 use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::Mutex;
