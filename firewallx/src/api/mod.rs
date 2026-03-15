@@ -43,8 +43,12 @@ async fn health_check() -> Json<HealthResponse> {
 }
 
 pub async fn start_api_server(state: DashboardState) {
+    // Allow requests from Railway health check domain
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin([
+            "*".parse::<http::header::HeaderValue>().unwrap(),
+            "https://healthcheck.railway.app".parse::<http::header::HeaderValue>().unwrap(),
+        ])
         .allow_methods(Any)
         .allow_headers(Any);
 
