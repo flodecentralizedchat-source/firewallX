@@ -6,6 +6,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use http::header::HeaderValue;
 use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -46,8 +47,8 @@ pub async fn start_api_server(state: DashboardState) {
     // Allow requests from Railway health check domain
     let cors = CorsLayer::new()
         .allow_origin([
-            "*".parse::<http::header::HeaderValue>().unwrap(),
-            "https://healthcheck.railway.app".parse::<http::header::HeaderValue>().unwrap(),
+            "*".parse::<HeaderValue>().unwrap(),
+            "https://healthcheck.railway.app".parse::<HeaderValue>().unwrap(),
         ])
         .allow_methods(Any)
         .allow_headers(Any);
